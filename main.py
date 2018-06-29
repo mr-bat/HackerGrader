@@ -1,9 +1,25 @@
-import json
-import pymongo
 import re
+import os
+import csv
+import ast
+import json
+import mosspy
+import pymongo
 import requests
 from pprint import pprint
 
+client = pymongo.MongoClient()
+db = client.da_database['spring97-ca3']
+scores = client.da_database['spring97-ca3-scores']
+problems = db.distinct('challenge')
+users = db.distinct('hacker_username')
+with open('config.json', 'r') as f:
+    config = json.load(f)
+mossServer = {}
+
+# Set of headers from a request after login to HackerRank
+# This script doesn't support automatic login to browser (yet). So you should set any request's
+# headers after login here to make it able to retrieve submissions.
 headers = {
     "Host": "www.hackerrank.com",
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.13; rv:60.0) Gecko/20100101 Firefox/60.0",
@@ -18,57 +34,118 @@ headers = {
     "Connection": "keep-alive",
 }
 
-CONTEST='ut-da-spring97-ca3'
-problems = [67971, 67893]
-contestEndTime = 30539  #By Minutes
+
+def makeNormal(data):
+    if data:
+        return ast.literal_eval(json.dumps(data))
+    return None
+
+
+def init():
+    for p in problems:
+        makeDirs(p['name'])
+
+
+def makeDirs(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def loadData(dataPath = './data.json'):
+    with open(dataPath) as f:
+        data = json.load(f)
+        db.insert_many(data)
 
 
 def getCode(submissionId):
     URL = 'https://www.hackerrank.com/rest/contests/{}/submissions/{}?&_=1530252865797'
-    res = requests.get(URL.format(CONTEST, submissionId), headers=headers).json()
-    return res['model']['code'], res['model']['language']
+    res = requests.get(URL.format(config['contest'], submissionId), headers=headers).json()
+    return res['model']['code'].replace(u"\u2018", "'").replace(u"\u2019", "'"), res['model']['language']
 
 
-def getNameExtension(language):
+def getLangExtension(language):
     if re.match('^c$', language):
-        return 'c'
-    if re.match('^c++', language):
-        return 'c++'
+        return '.c'
+    if re.match('^c+', language):
+        return '.cpp'
     if re.match('^java', language):
-        return 'java'
+        return '.java'
     if re.match('^python', language):
-        return 'python'
+        return '.py'
 
-
-def saveCode(code, filename):
-    with open(filename, "w") as text_file:
-        text_file.write(code)
 
 def findBestSubmission(user, problem):
-    submission = table.find_one(
+    submission = db.find_one(
         {
             "hacker_username": user,
             "challenge": problem,
             "time_from_start": {
-                "$lte": contestEndTime
+                "$lte": config['contestEndTime']
             }
+        },
+        projection={
+            '_id': False,
+            'id': True,
+            'language': True,
+            'time_from_start': True,
+            'hacker_username': True,
+            'score': True,
+            'challenge': True,
         },
         sort=[('score', pymongo.DESCENDING), ('time_from_start', pymongo.DESCENDING)]
     )
 
     return submission
 
-# def getResult(user):
 
-client = pymongo.MongoClient()
-daDB = client.da_database
-table = daDB['spring97-ca3']
+def saveSubmission(submission):
+    challenge = submission['challenge']['name']
+    username = submission['hacker_username']
+    path = challenge + '/' + username + getLangExtension(submission['language'])
 
-with open('data.json') as f:
-    data = json.load(f)
+    with open(path, 'w') as f:
+        code, language = getCode(submission['id'])
+        f.write(code)
 
-users = table.distinct('hacker_username')
-problems = table.distinct('challenge')
 
-# print [x for x in table.find({ "time_from_start": { "$lte": 3301 } })]
-findBestSubmission(users[0], problems[0])
+def computeScore(user):
+    res = []
+    for p in problems:
+        s = makeNormal(findBestSubmission(user, p))
+        if s:
+            res.append(s['score'])
+            saveSubmission(s)
+
+    return res
+
+
+def sendToMoss():
+    for p in problems:
+        for l in config['languages']:
+            moss = mosspy.Moss(config['userid'], l)
+            moss.addFilesByWildcard('./{}/*.{}'.format(p['name'], getLangExtension(l)))
+            url = moss.send()
+            print "Moss url: ", url
+            print p['name'], l
+
+            # Seems buggy from mosspy project
+            mosspy.download_report(url, 'Plagiarism/{}/{}/'.format(p['name'], l), connections=8)
+
+def main():
+    print users
+    init()
+    finalResult = []
+    with open(config['outputPath'], "w") as output:
+        writer = csv.writer(output, lineterminator='\n')
+        for u in users:
+            s = computeScore(u)
+            writer.writerow([u] + s)
+            scores.insert_one({'username': u, 'score': s})
+            finalResult.append([u] + s)
+    pprint(finalResult)
+
+    sendToMoss()
+
+
+if __name__ == '__main__':
+    main()

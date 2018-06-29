@@ -1,0 +1,12 @@
+{
+  "languages": [
+    "c",
+    "cc",
+    "java",
+    "python"
+  ],
+  "userid": 123456789,
+  "contest": "ut-da-spring97-ca3",
+  "contestEndTime": 29520,
+  "outputPath": "./result.csv"
+}
