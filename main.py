@@ -1,5 +1,6 @@
 import json
 import pymongo
+import re
 import requests
 from pprint import pprint
 
@@ -19,15 +20,45 @@ headers = {
 
 CONTEST='ut-da-spring97-ca3'
 problems = [67971, 67893]
+contestEndTime = 30539  #By Minutes
+
 
 def getCode(submissionId):
     URL = 'https://www.hackerrank.com/rest/contests/{}/submissions/{}?&_=1530252865797'
     res = requests.get(URL.format(CONTEST, submissionId), headers=headers).json()
-    return res['model']['code']
+    return res['model']['code'], res['model']['language']
 
-# def findBestSubmission(user, challenge):
-#
-# def findResult(user):
+
+def getNameExtension(language):
+    if re.match('^c$', language):
+        return 'c'
+    if re.match('^c++', language):
+        return 'c++'
+    if re.match('^java', language):
+        return 'java'
+    if re.match('^python', language):
+        return 'python'
+
+
+def saveCode(code, filename):
+    with open(filename, "w") as text_file:
+        text_file.write(code)
+
+def findBestSubmission(user, problem):
+    submission = table.find_one(
+        {
+            "hacker_username": user,
+            "challenge": problem,
+            "time_from_start": {
+                "$lte": contestEndTime
+            }
+        },
+        sort=[('score', pymongo.DESCENDING), ('time_from_start', pymongo.DESCENDING)]
+    )
+
+    return submission
+
+# def getResult(user):
 
 client = pymongo.MongoClient()
 daDB = client.da_database
@@ -37,5 +68,7 @@ with open('data.json') as f:
     data = json.load(f)
 
 users = table.distinct('hacker_username')
+problems = table.distinct('challenge')
 
-getCode('1307528564')
+# print [x for x in table.find({ "time_from_start": { "$lte": 3301 } })]
+findBestSubmission(users[0], problems[0])
